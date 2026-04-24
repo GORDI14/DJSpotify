@@ -160,10 +160,17 @@ async function handlePlaylistTracks(req, res) {
     }
     throw error;
   }
-  const features = await getAudioFeaturesForTracks(
-    session.accessToken,
-    tracks.map((track) => track.id).filter(Boolean),
-  );
+  let features = [];
+  try {
+    features = await getAudioFeaturesForTracks(
+      session.accessToken,
+      tracks.map((track) => track.id).filter(Boolean),
+    );
+  } catch (error) {
+    if (error.status !== 403) {
+      throw error;
+    }
+  }
   const enrichedTracks = combineTracksWithFeatures(tracks, features);
 
   res.json({ tracks: enrichedTracks });

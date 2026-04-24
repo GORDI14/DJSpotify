@@ -171,9 +171,15 @@ export async function getPlaylistTracks(accessToken, playlistId) {
   const modernItemsPath = `/playlists/${playlistId}/items?limit=100&market=from_token&additional_types=track`;
   const legacyTracksPath = `/playlists/${playlistId}/tracks?limit=100&market=from_token&additional_types=track`;
 
-  const modernTracks = await fetchPlaylistItems(accessToken, modernItemsPath);
-  if (modernTracks.length > 0) {
-    return modernTracks;
+  try {
+    const modernTracks = await fetchPlaylistItems(accessToken, modernItemsPath);
+    if (modernTracks.length > 0) {
+      return modernTracks;
+    }
+  } catch (error) {
+    if (error.status !== 403) {
+      throw error;
+    }
   }
 
   return fetchPlaylistItems(accessToken, legacyTracksPath);
