@@ -44,11 +44,11 @@ export const api = {
     }),
   getPlaylists: (sessionId) => request("/api/playlists", { sessionId }),
   getTracks: (sessionId, playlistId) => request(`/api/tracks/${playlistId}`, { sessionId }),
-  generateDJSet: (sessionId, tracks, intensity) =>
+  generateDJSet: (sessionId, sourceId, intensity) =>
     request("/api/generate", {
       method: "POST",
       sessionId,
-      body: { tracks, intensity },
+      body: { sourceId, intensity },
     }),
   getDevices: (sessionId) => request("/api/player/devices", { sessionId }),
   getPlaybackState: (sessionId) => request("/api/player/state", { sessionId }),

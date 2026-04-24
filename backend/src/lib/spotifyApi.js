@@ -183,6 +183,7 @@ export async function getSavedTracks(accessToken) {
       album: track.album?.name ?? "Unknown album",
       durationMs: track.duration_ms,
       image: track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
+      isrc: track.external_ids?.isrc ?? null,
       isLocal: false,
       originalIndex,
     }));
@@ -209,6 +210,7 @@ function mapPlaylistItems(items) {
       album: track.album?.name ?? "Unknown album",
       durationMs: track.duration_ms,
       image: track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
+      isrc: track.external_ids?.isrc ?? null,
       isLocal,
       originalIndex,
     }));

@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import express from "express";
 import crypto from "node:crypto";
 import { generateDJSet } from "./lib/djAlgorithm.js";
+import { enrichTracksWithExternalAudioFeatures } from "./lib/externalAudioFeatures.js";
 import { clearSession, createSession, getSession, updateSession } from "./lib/sessionStore.js";
 import {
   exchangeCodeForToken,
@@ -53,7 +54,7 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
 function requireConfig() {
@@ -189,7 +190,7 @@ async function handlePlaylists(req, res) {
 }
 
 async function handlePlaylistTracks(req, res) {
-  const { session } = await getAuthorizedSession(req, res);
+  const { sessionId, session } = await getAuthorizedSession(req, res);
   let tracks;
 
   if (req.params.playlistId === "liked-songs") {
@@ -221,6 +222,14 @@ async function handlePlaylistTracks(req, res) {
   }
   const enrichedTracks = combineTracksWithFeatures(tracks, features);
 
+  updateSession(sessionId, {
+    cachedTrackSource: {
+      sourceId: req.params.playlistId,
+      tracks: enrichedTracks,
+      updatedAt: Date.now(),
+    },
+  });
+
   res.json({
     tracks: enrichedTracks,
     audioFeaturesAvailable: features.length > 0,
@@ -228,9 +237,57 @@ async function handlePlaylistTracks(req, res) {
 }
 
 async function handleGenerate(req, res) {
-  const { tracks = [], intensity = "medium" } = req.body;
-  const generatedSet = generateDJSet(tracks, intensity);
-  res.json({ tracks: generatedSet, intensity });
+  const { tracks = [], sourceId = null, intensity = "medium" } = req.body;
+
+  let sourceTracks = Array.isArray(tracks) ? tracks : [];
+  if (sourceId) {
+    const sessionId = getSessionId(req, res);
+    const session = getSession(sessionId);
+    const cachedSource = session?.cachedTrackSource;
+    if (cachedSource?.sourceId === sourceId && Array.isArray(cachedSource.tracks)) {
+      sourceTracks = cachedSource.tracks;
+    }
+  }
+
+  let resolvedTracks = sourceTracks;
+  let externalAudioFeatures = {
+    provider: "none",
+    enrichedCount: 0,
+    attemptedLookups: 0,
+    lookupLimitApplied: false,
+  };
+
+  const needsFallbackFeatures = resolvedTracks.some(
+    (track) => !Number.isFinite(track.tempo) || !Number.isFinite(track.energy) || !Number.isFinite(track.danceability),
+  );
+
+  if (needsFallbackFeatures) {
+    const fallback = await enrichTracksWithExternalAudioFeatures(resolvedTracks);
+    resolvedTracks = fallback.tracks;
+    externalAudioFeatures = fallback.meta;
+
+    if (sourceId) {
+      const sessionId = getSessionId(req, res);
+      const session = getSession(sessionId);
+      const cachedSource = session?.cachedTrackSource;
+      if (cachedSource?.sourceId === sourceId) {
+        updateSession(sessionId, {
+          cachedTrackSource: {
+            ...cachedSource,
+            tracks: resolvedTracks,
+            updatedAt: Date.now(),
+          },
+        });
+      }
+    }
+  }
+
+  const generatedSet = generateDJSet(resolvedTracks, intensity);
+  res.json({
+    tracks: generatedSet,
+    intensity,
+    externalAudioFeatures,
+  });
 }
 
 function redirectToMobileApp(returnUrl, query) {

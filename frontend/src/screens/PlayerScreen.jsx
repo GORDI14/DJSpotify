@@ -20,6 +20,7 @@ export default function PlayerScreen({ route }) {
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [audioFeaturesAvailable, setAudioFeaturesAvailable] = useState(true);
+  const [externalAudioFeatures, setExternalAudioFeatures] = useState(null);
 
   const loadDevices = useCallback(async () => {
     const response = await api.getDevices(sessionId);
@@ -50,8 +51,9 @@ export default function PlayerScreen({ route }) {
       setSourceTracks(trackResponse.tracks);
       setAudioFeaturesAvailable(trackResponse.audioFeaturesAvailable !== false);
 
-      const generated = await api.generateDJSet(sessionId, trackResponse.tracks, intensity);
+      const generated = await api.generateDJSet(sessionId, playlist.id, intensity);
       setDjSet(generated.tracks);
+      setExternalAudioFeatures(generated.externalAudioFeatures ?? null);
       if (!trackResponse.tracks.length) {
         setError("Spotify returned this playlist without playable tracks for the app.");
       }
@@ -189,6 +191,16 @@ export default function PlayerScreen({ route }) {
           {!audioFeaturesAvailable ? (
             <Text style={styles.warning}>
               Spotify is not returning audio features to this app right now, so BPM and energy are unavailable.
+            </Text>
+          ) : null}
+          {externalAudioFeatures?.provider === "acousticbrainz" ? (
+            <Text style={styles.warning}>
+              External fallback filled {externalAudioFeatures.enrichedCount} tracks using AcousticBrainz. Energy is an estimate based on loudness descriptors.
+            </Text>
+          ) : null}
+          {externalAudioFeatures?.lookupLimitApplied ? (
+            <Text style={styles.warning}>
+              The external lookup limit was reached for this source, so some tracks may still be missing BPM or energy.
             </Text>
           ) : null}
         </SectionCard>

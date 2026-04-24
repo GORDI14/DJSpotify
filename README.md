@@ -86,6 +86,7 @@ EXPO_PUBLIC_API_URL=https://your-https-tunnel-or-domain.example.com
 FRONTEND_URL=http://127.0.0.1:8081
 PORT=3001
 SESSION_SECRET=replace_this_with_a_random_secret
+EXTERNAL_FEATURE_LOOKUP_LIMIT=40
 ```
 
 ## Local development for Android/iOS
@@ -146,6 +147,20 @@ Intensity modes:
 - `low`: tighter BPM changes, softer build
 - `medium`: balanced progression
 - `high`: more aggressive energy ramp and larger BPM tolerance
+
+## External BPM fallback
+
+If Spotify does not return audio features for your app, the backend can try an open fallback path:
+
+- Resolve tracks by ISRC through MusicBrainz
+- Fetch BPM and loudness-based descriptors from AcousticBrainz
+- Estimate energy from loudness when direct Spotify energy is unavailable
+
+Notes:
+
+- MusicBrainz asks clients not to exceed 1 request per second, so very large sources can take time to enrich.
+- `EXTERNAL_FEATURE_LOOKUP_LIMIT` controls how many missing tracks the backend will try to enrich per request.
+- This fallback is best-effort. BPM can be real external data, but energy may be an estimate derived from loudness-related descriptors.
 
 ## Mobile playback behavior
 
