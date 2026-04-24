@@ -122,20 +122,17 @@ function combineTracksWithFeatures(tracks, features) {
   return tracks
     .map((track) => {
       const feature = featureMap.get(track.id);
-      if (!feature) {
-        return null;
-      }
 
       return {
         ...track,
-        tempo: feature.tempo,
-        energy: feature.energy,
-        danceability: feature.danceability,
-        valence: feature.valence,
-        key: feature.key,
+        tempo: feature?.tempo ?? null,
+        energy: feature?.energy ?? null,
+        danceability: feature?.danceability ?? null,
+        valence: feature?.valence ?? null,
+        key: feature?.key ?? null,
+        hasAudioFeatures: Boolean(feature),
       };
-    })
-    .filter(Boolean);
+    });
 }
 
 async function handlePlaylists(req, res) {

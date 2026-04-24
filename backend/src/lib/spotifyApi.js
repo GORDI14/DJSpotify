@@ -78,6 +78,28 @@ export async function getCurrentUser(accessToken) {
   return spotifyFetch(accessToken, "/me");
 }
 
+async function resolvePlaylistTrackTotal(accessToken, playlist) {
+  const directTotal = playlist.tracks?.total;
+  if (Number.isFinite(directTotal) && directTotal > 0) {
+    return directTotal;
+  }
+
+  const tracksHref = playlist.tracks?.href;
+  if (!tracksHref) {
+    return Number.isFinite(directTotal) ? directTotal : 0;
+  }
+
+  try {
+    const totalResponse = await spotifyFetch(
+      accessToken,
+      tracksHref.replace(SPOTIFY_API_BASE, "") + (tracksHref.includes("?") ? "&limit=1" : "?limit=1"),
+    );
+    return totalResponse?.total ?? directTotal ?? 0;
+  } catch {
+    return directTotal ?? 0;
+  }
+}
+
 export async function getUserPlaylists(accessToken) {
   let nextPath = "/me/playlists?limit=50";
   const playlists = [];
@@ -88,15 +110,17 @@ export async function getUserPlaylists(accessToken) {
     nextPath = page.next;
   }
 
-  return playlists.map((playlist) => ({
-    id: playlist.id,
-    name: playlist.name,
-    description: playlist.description,
-    totalTracks: playlist.tracks?.total ?? 0,
-    image: playlist.images?.[0]?.url ?? null,
-    owner: playlist.owner?.display_name ?? playlist.owner?.id ?? "Spotify user",
-    uri: playlist.uri,
-  }));
+  return Promise.all(
+    playlists.map(async (playlist) => ({
+      id: playlist.id,
+      name: playlist.name,
+      description: playlist.description,
+      totalTracks: await resolvePlaylistTrackTotal(accessToken, playlist),
+      image: playlist.images?.[0]?.url ?? null,
+      owner: playlist.owner?.display_name ?? playlist.owner?.id ?? "Spotify user",
+      uri: playlist.uri,
+    })),
+  );
 }
 
 export async function getPlaylistTracks(accessToken, playlistId) {
@@ -110,9 +134,12 @@ export async function getPlaylistTracks(accessToken, playlistId) {
   }
 
   return tracks
-    .map((item) => item.track)
-    .filter((track) => track && track.type === "track" && track.id)
-    .map((track) => ({
+    .map((item, index) => ({
+      track: item.track,
+      originalIndex: index,
+    }))
+    .filter(({ track }) => track && track.type === "track" && track.id)
+    .map(({ track, originalIndex }) => ({
       id: track.id,
       uri: track.uri,
       name: track.name,
@@ -120,6 +147,7 @@ export async function getPlaylistTracks(accessToken, playlistId) {
       album: track.album?.name ?? "Unknown album",
       durationMs: track.duration_ms,
       image: track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
+      originalIndex,
     }));
 }
 

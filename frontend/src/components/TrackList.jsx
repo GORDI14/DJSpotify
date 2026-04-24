@@ -15,8 +15,14 @@ export default function TrackList({ tracks, compact = false }) {
           </View>
           {!compact ? (
             <View style={styles.metrics}>
-              <Text style={styles.metric}>{Math.round(track.tempo ?? 0)} BPM</Text>
-              <Text style={styles.metric}>{Math.round((track.energy ?? 0) * 100)}% energy</Text>
+              <Text style={styles.metric}>
+                {Number.isFinite(track.tempo) ? `${Math.round(track.tempo)} BPM` : "BPM unavailable"}
+              </Text>
+              <Text style={styles.metric}>
+                {Number.isFinite(track.energy)
+                  ? `${Math.round(track.energy * 100)}% energy`
+                  : "Energy unavailable"}
+              </Text>
             </View>
           ) : null}
         </View>

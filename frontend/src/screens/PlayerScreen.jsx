@@ -50,6 +50,9 @@ export default function PlayerScreen({ route }) {
 
       const generated = await api.generateDJSet(sessionId, trackResponse.tracks, intensity);
       setDjSet(generated.tracks);
+      if (!trackResponse.tracks.length) {
+        setError("Spotify returned this playlist without playable tracks for the app.");
+      }
       await loadDevices();
       await loadPlaybackState();
     } catch (requestError) {
@@ -77,12 +80,20 @@ export default function PlayerScreen({ route }) {
       return null;
     }
 
+    const tracksWithTempo = djSet.filter((track) => Number.isFinite(track.tempo));
+    const tracksWithEnergy = djSet.filter((track) => Number.isFinite(track.energy));
+
     return {
       totalTracks: djSet.length,
-      averageBpm: Math.round(djSet.reduce((sum, track) => sum + track.tempo, 0) / djSet.length),
-      averageEnergy: Math.round(
-        (djSet.reduce((sum, track) => sum + track.energy, 0) / djSet.length) * 100 / djSet.length,
-      ),
+      averageBpm: tracksWithTempo.length
+        ? Math.round(tracksWithTempo.reduce((sum, track) => sum + track.tempo, 0) / tracksWithTempo.length)
+        : null,
+      averageEnergy: tracksWithEnergy.length
+        ? Math.round(
+            (tracksWithEnergy.reduce((sum, track) => sum + track.energy, 0) / tracksWithEnergy.length) * 100,
+          )
+        : null,
+      tracksWithAudioFeatures: tracksWithTempo.length,
     };
   }, [djSet]);
 
@@ -91,6 +102,9 @@ export default function PlayerScreen({ route }) {
       setActionError("");
       if (!selectedDeviceId) {
         throw new Error("Open Spotify on the target device first, then refresh devices.");
+      }
+      if (!djSet.length) {
+        throw new Error("Generate a DJ set with playable tracks before starting playback.");
       }
 
       await api.transferPlayback(sessionId, selectedDeviceId, false);
@@ -159,8 +173,17 @@ export default function PlayerScreen({ route }) {
         <SectionCard>
           <Text style={styles.sectionTitle}>Set summary</Text>
           <Text style={styles.stat}>Tracks: {stats.totalTracks}</Text>
-          <Text style={styles.stat}>Average BPM: {stats.averageBpm}</Text>
-          <Text style={styles.stat}>Average energy: {stats.averageEnergy}%</Text>
+          <Text style={styles.stat}>
+            Average BPM: {stats.averageBpm ?? "Unavailable from Spotify"}
+          </Text>
+          <Text style={styles.stat}>
+            Average energy: {stats.averageEnergy != null ? `${stats.averageEnergy}%` : "Unavailable from Spotify"}
+          </Text>
+          {stats.tracksWithAudioFeatures !== stats.totalTracks ? (
+            <Text style={styles.warning}>
+              Some tracks do not include Spotify audio features, so they stay closer to the original playlist order.
+            </Text>
+          ) : null}
         </SectionCard>
       ) : null}
 
@@ -222,14 +245,22 @@ export default function PlayerScreen({ route }) {
       {!loading ? (
         <SectionCard>
           <Text style={styles.sectionTitle}>Generated DJ set</Text>
-          <TrackList tracks={djSet} />
+          {djSet.length ? (
+            <TrackList tracks={djSet} />
+          ) : (
+            <Text style={styles.copy}>No playable tracks were available to generate a DJ set.</Text>
+          )}
         </SectionCard>
       ) : null}
 
       {!loading ? (
         <SectionCard>
           <Text style={styles.sectionTitle}>Source playlist preview</Text>
-          <TrackList tracks={sourceTracks.slice(0, 10)} compact />
+          {sourceTracks.length ? (
+            <TrackList tracks={sourceTracks.slice(0, 10)} compact />
+          ) : (
+            <Text style={styles.copy}>The playlist came back empty for the current Spotify session.</Text>
+          )}
         </SectionCard>
       ) : null}
     </ScrollView>
@@ -366,5 +397,9 @@ const styles = StyleSheet.create({
   error: {
     color: "#ff92a2",
     marginTop: 14,
+  },
+  warning: {
+    color: "#ffd37a",
+    marginTop: 12,
   },
 });

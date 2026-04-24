@@ -54,12 +54,22 @@ function scoreCandidate(previousTrack, candidate, targetEnergy, bpmTolerance) {
   return energyGap * 4 + bpmPenalty + keyPenalty - danceabilityBoost;
 }
 
-export function generateDJSet(tracks, intensity = "medium") {
-  const filtered = tracks.filter((track) => Number.isFinite(track.tempo) && Number.isFinite(track.energy));
-  const sortedByTempo = [...filtered].sort((a, b) => a.tempo - b.tempo);
+function annotateOrderedTracks(tracks, buildHint) {
+  return tracks.map((track, index) => ({
+    ...track,
+    djPosition: index + 1,
+    transitionHint: buildHint(track, index),
+  }));
+}
 
-  if (sortedByTempo.length <= 2) {
-    return sortedByTempo;
+export function generateDJSet(tracks, intensity = "medium") {
+  const featuredTracks = tracks.filter(
+    (track) => Number.isFinite(track.tempo) && Number.isFinite(track.energy) && Number.isFinite(track.danceability),
+  );
+  const missingFeatureTracks = tracks.filter((track) => !featuredTracks.includes(track));
+
+  if (featuredTracks.length === 0) {
+    return annotateOrderedTracks([...tracks], () => "Original playlist order");
   }
 
   const intensityMap = {
@@ -69,6 +79,12 @@ export function generateDJSet(tracks, intensity = "medium") {
   };
 
   const mode = intensityMap[intensity] ?? intensityMap.medium;
+  const sortedByTempo = [...featuredTracks].sort((a, b) => a.tempo - b.tempo);
+
+  if (sortedByTempo.length <= 2) {
+    return annotateOrderedTracks([...sortedByTempo, ...missingFeatureTracks], () => "Original playlist order");
+  }
+
   const energyTargets = buildEnergyTargets(sortedByTempo.length, mode.multiplier);
   const remaining = [...sortedByTempo];
   const ordered = [];
@@ -93,14 +109,27 @@ export function generateDJSet(tracks, intensity = "medium") {
     ordered.push(remaining.shift());
   }
 
-  return ordered.map((track, index) => ({
-    ...track,
-    djPosition: index + 1,
-    transitionHint:
-      index === 0
-        ? "Warm-up opener"
-        : Math.abs(track.tempo - ordered[index - 1].tempo) <= mode.bpmTolerance
-          ? "Smooth BPM handoff"
-          : "Energy-led jump",
-  }));
+  const mixed = annotateOrderedTracks(ordered, (track, index) =>
+    index === 0
+      ? "Warm-up opener"
+      : Math.abs(track.tempo - ordered[index - 1].tempo) <= mode.bpmTolerance
+        ? "Smooth BPM handoff"
+        : "Energy-led jump",
+  );
+
+  const fallbackTail = missingFeatureTracks
+    .sort((a, b) => (a.originalIndex ?? 0) - (b.originalIndex ?? 0))
+    .map((track) => ({
+      ...track,
+      transitionHint: "Kept from original playlist order",
+    }));
+
+  return annotateOrderedTracks([...mixed, ...fallbackTail], (track, index) =>
+    track.transitionHint ??
+    (index === 0
+      ? "Warm-up opener"
+      : Math.abs(track.tempo - mixed[index - 1].tempo) <= mode.bpmTolerance
+        ? "Smooth BPM handoff"
+        : "Energy-led jump"),
+  );
 }
