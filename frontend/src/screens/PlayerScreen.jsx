@@ -159,8 +159,8 @@ export default function PlayerScreen({ route }) {
       <SectionCard>
         <Text style={styles.title}>{playlist?.name ?? "Smart DJ"}</Text>
         <Text style={styles.copy}>
-          Smart DJ now starts from a seed track and keeps a live queue of the next best 5 songs based on the BPM and
-          energy data available at the time.
+          Smart DJ now starts from a seed track and, at each step, samples around 20 random songs from the source to
+          decide which one fits best next with the BPM and energy data available at the time.
         </Text>
       </SectionCard>
 

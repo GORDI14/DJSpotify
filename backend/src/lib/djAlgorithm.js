@@ -72,12 +72,39 @@ function getIntensityMode(intensity) {
   return intensityMap[intensity] ?? intensityMap.medium;
 }
 
+function sampleRandomCandidates(tracks, sampleSize) {
+  if (tracks.length <= sampleSize) {
+    return [...tracks];
+  }
+
+  const shuffled = [...tracks];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+  }
+
+  return shuffled.slice(0, sampleSize);
+}
+
+function scoreCandidateWithFallback(previousTrack, candidate, targetEnergy, bpmTolerance) {
+  const hasFullFeatures =
+    Number.isFinite(candidate.tempo) && Number.isFinite(candidate.energy) && Number.isFinite(candidate.danceability);
+
+  if (previousTrack && hasFullFeatures) {
+    return scoreCandidate(previousTrack, candidate, targetEnergy, bpmTolerance);
+  }
+
+  return scoreFallbackCandidate(previousTrack, candidate);
+}
+
 function scoreFallbackCandidate(previousTrack, candidate) {
   const durationGap = previousTrack ? Math.abs((candidate.durationMs ?? 0) - (previousTrack.durationMs ?? 0)) / 1000 : 0;
   const indexPenalty = Math.abs((candidate.originalIndex ?? 0) - (previousTrack?.originalIndex ?? 0)) * 0.08;
   const localPenalty = candidate.isLocal ? 5 : 0;
+  const repeatedArtistPenalty =
+    previousTrack && previousTrack.artists && candidate.artists && previousTrack.artists === candidate.artists ? 1.5 : 0;
 
-  return durationGap * 0.02 + indexPenalty + localPenalty;
+  return durationGap * 0.02 + indexPenalty + localPenalty + repeatedArtistPenalty;
 }
 
 export function chooseRandomSeedTrack(tracks) {
@@ -96,28 +123,21 @@ export function chooseNextTrack(previousTrack, remainingTracks, intensity = "med
     return null;
   }
 
-  const featuredTracks = remainingTracks.filter(
-    (track) => Number.isFinite(track.tempo) && Number.isFinite(track.energy) && Number.isFinite(track.danceability),
-  );
+  const sampleSize = 20;
+  const mode = getIntensityMode(intensity);
+  const referenceLength = totalLength || remainingTracks.length + stepIndex + 1;
+  const energyTargets = buildEnergyTargets(referenceLength, mode.multiplier);
+  const targetEnergy = energyTargets[Math.min(stepIndex, energyTargets.length - 1)] ?? previousTrack?.energy ?? 0.6;
+  const candidatePool = sampleRandomCandidates(remainingTracks, sampleSize);
 
-  if (previousTrack && featuredTracks.length) {
-    const mode = getIntensityMode(intensity);
-    const referenceLength = totalLength || featuredTracks.length + stepIndex + 1;
-    const energyTargets = buildEnergyTargets(referenceLength, mode.multiplier);
-    const targetEnergy = energyTargets[Math.min(stepIndex, energyTargets.length - 1)] ?? previousTrack.energy ?? 0.6;
+  const rankedCandidates = candidatePool
+    .map((candidate) => ({
+      candidate,
+      score: scoreCandidateWithFallback(previousTrack, candidate, targetEnergy, mode.bpmTolerance),
+    }))
+    .sort((a, b) => a.score - b.score);
 
-    const ranked = [...featuredTracks].sort(
-      (a, b) => scoreCandidate(previousTrack, a, targetEnergy, mode.bpmTolerance) - scoreCandidate(previousTrack, b, targetEnergy, mode.bpmTolerance),
-    );
-
-    return ranked[0] ?? null;
-  }
-
-  const rankedFallback = [...remainingTracks].sort(
-    (a, b) => scoreFallbackCandidate(previousTrack, a) - scoreFallbackCandidate(previousTrack, b),
-  );
-
-  return rankedFallback[0] ?? null;
+  return rankedCandidates[0]?.candidate ?? candidatePool[0] ?? null;
 }
 
 export function generateDJSet(tracks, intensity = "medium") {
