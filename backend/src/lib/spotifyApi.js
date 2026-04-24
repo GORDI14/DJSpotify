@@ -124,7 +124,7 @@ export async function getUserPlaylists(accessToken) {
 }
 
 export async function getPlaylistTracks(accessToken, playlistId) {
-  let nextPath = `/playlists/${playlistId}/tracks?limit=100`;
+  let nextPath = `/playlists/${playlistId}/tracks?limit=100&market=from_token`;
   const tracks = [];
 
   while (nextPath) {
@@ -135,11 +135,12 @@ export async function getPlaylistTracks(accessToken, playlistId) {
 
   return tracks
     .map((item, index) => ({
-      track: item.track,
+      track: item.item ?? item.track,
+      isLocal: Boolean(item.is_local),
       originalIndex: index,
     }))
-    .filter(({ track }) => track && track.type === "track" && track.id)
-    .map(({ track, originalIndex }) => ({
+    .filter(({ track }) => track && track.type === "track" && (track.id || track.uri))
+    .map(({ track, originalIndex, isLocal }) => ({
       id: track.id,
       uri: track.uri,
       name: track.name,
@@ -147,6 +148,7 @@ export async function getPlaylistTracks(accessToken, playlistId) {
       album: track.album?.name ?? "Unknown album",
       durationMs: track.duration_ms,
       image: track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
+      isLocal,
       originalIndex,
     }));
 }
