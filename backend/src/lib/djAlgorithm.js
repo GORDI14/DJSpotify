@@ -54,6 +54,26 @@ function scoreCandidate(previousTrack, candidate, targetEnergy, bpmTolerance) {
   return energyGap * 4 + bpmPenalty + keyPenalty - danceabilityBoost;
 }
 
+function scoreRecentHistoryPenalty(candidate, recentTracks) {
+  if (!recentTracks?.length) {
+    return 0;
+  }
+
+  let penalty = 0;
+  const recentArtists = recentTracks.map((track) => track?.artists).filter(Boolean);
+  const recentAlbums = recentTracks.map((track) => track?.album).filter(Boolean);
+
+  if (recentArtists.includes(candidate.artists)) {
+    penalty += 2.2;
+  }
+
+  if (recentAlbums.includes(candidate.album)) {
+    penalty += 0.9;
+  }
+
+  return penalty;
+}
+
 function annotateOrderedTracks(tracks, buildHint) {
   return tracks.map((track, index) => ({
     ...track,
@@ -97,14 +117,15 @@ function scoreCandidateWithFallback(previousTrack, candidate, targetEnergy, bpmT
   return scoreFallbackCandidate(previousTrack, candidate);
 }
 
-function scoreFallbackCandidate(previousTrack, candidate) {
+function scoreFallbackCandidate(previousTrack, candidate, recentTracks = []) {
   const durationGap = previousTrack ? Math.abs((candidate.durationMs ?? 0) - (previousTrack.durationMs ?? 0)) / 1000 : 0;
   const indexPenalty = Math.abs((candidate.originalIndex ?? 0) - (previousTrack?.originalIndex ?? 0)) * 0.08;
   const localPenalty = candidate.isLocal ? 5 : 0;
   const repeatedArtistPenalty =
     previousTrack && previousTrack.artists && candidate.artists && previousTrack.artists === candidate.artists ? 1.5 : 0;
+  const recentPenalty = scoreRecentHistoryPenalty(candidate, recentTracks);
 
-  return durationGap * 0.02 + indexPenalty + localPenalty + repeatedArtistPenalty;
+  return durationGap * 0.02 + indexPenalty + localPenalty + repeatedArtistPenalty + recentPenalty;
 }
 
 export function chooseRandomSeedTrack(tracks) {
@@ -118,7 +139,34 @@ export function chooseRandomSeedTrack(tracks) {
   return pool[index] ?? pool[0];
 }
 
-export function chooseNextTrack(previousTrack, remainingTracks, intensity = "medium", stepIndex = 0, totalLength = 0) {
+function pickWeightedTopCandidate(rankedCandidates) {
+  const topCandidates = rankedCandidates.slice(0, 3);
+  if (!topCandidates.length) {
+    return null;
+  }
+
+  const weights = topCandidates.map((entry, index) => 1 / (index + 1));
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  let cursor = Math.random() * totalWeight;
+
+  for (let index = 0; index < topCandidates.length; index += 1) {
+    cursor -= weights[index];
+    if (cursor <= 0) {
+      return topCandidates[index].candidate;
+    }
+  }
+
+  return topCandidates[0].candidate;
+}
+
+export function chooseNextTrack(
+  previousTrack,
+  remainingTracks,
+  intensity = "medium",
+  stepIndex = 0,
+  totalLength = 0,
+  recentTracks = [],
+) {
   if (!remainingTracks.length) {
     return null;
   }
@@ -133,11 +181,16 @@ export function chooseNextTrack(previousTrack, remainingTracks, intensity = "med
   const rankedCandidates = candidatePool
     .map((candidate) => ({
       candidate,
-      score: scoreCandidateWithFallback(previousTrack, candidate, targetEnergy, mode.bpmTolerance),
+      score:
+        scoreCandidateWithFallback(previousTrack, candidate, targetEnergy, mode.bpmTolerance) +
+        scoreRecentHistoryPenalty(candidate, recentTracks) +
+        (previousTrack && Number.isFinite(candidate.energy) && Number.isFinite(previousTrack.energy)
+          ? Math.abs(candidate.energy - previousTrack.energy) * 1.2
+          : 0),
     }))
     .sort((a, b) => a.score - b.score);
 
-  return rankedCandidates[0]?.candidate ?? candidatePool[0] ?? null;
+  return pickWeightedTopCandidate(rankedCandidates) ?? candidatePool[0] ?? null;
 }
 
 export function generateDJSet(tracks, intensity = "medium") {

@@ -148,14 +148,30 @@ function buildUpcomingPreview(currentTrack, upcomingTracks) {
   }));
 }
 
-function extendDynamicQueue(currentTrack, upcomingTracks, remainingTracks, intensity, desiredSize) {
+function buildRecentTrackWindow(currentTrack, playedTracks) {
+  const recent = [...(playedTracks ?? [])];
+  if (currentTrack) {
+    recent.push(currentTrack);
+  }
+  return recent.slice(-4);
+}
+
+function extendDynamicQueue(currentTrack, upcomingTracks, remainingTracks, intensity, desiredSize, playedTracks = []) {
   const nextUpcoming = [...upcomingTracks];
   let nextRemaining = [...remainingTracks];
   let referenceTrack = nextUpcoming[nextUpcoming.length - 1] ?? currentTrack ?? null;
   const totalLength = nextUpcoming.length + nextRemaining.length + (currentTrack ? 1 : 0);
+  const recentTracks = buildRecentTrackWindow(currentTrack, playedTracks);
 
   while (nextUpcoming.length < desiredSize && nextRemaining.length > 0) {
-    const candidate = chooseNextTrack(referenceTrack, nextRemaining, intensity, nextUpcoming.length, totalLength);
+    const candidate = chooseNextTrack(
+      referenceTrack,
+      nextRemaining,
+      intensity,
+      nextUpcoming.length,
+      totalLength,
+      [...recentTracks, ...nextUpcoming].slice(-4),
+    );
     const selected = candidate ?? nextRemaining[0];
     nextUpcoming.push(selected);
     nextRemaining = removeTrackByKey(nextRemaining, selected);
@@ -176,6 +192,7 @@ function syncDynamicSessionState(djSession, currentTrackId) {
   let currentTrack = djSession.currentTrack ?? null;
   let upcomingTracks = [...(djSession.upcomingTracks ?? [])];
   let playedTrackIds = [...(djSession.playedTrackIds ?? [])];
+  let playedTracks = [...(djSession.playedTracks ?? [])];
 
   if (currentTrackId) {
     if (uniqueTrackKey(currentTrack) !== currentTrackId) {
@@ -183,6 +200,7 @@ function syncDynamicSessionState(djSession, currentTrackId) {
       if (promotedIndex >= 0) {
         if (currentTrack) {
           playedTrackIds.push(uniqueTrackKey(currentTrack));
+          playedTracks.push(currentTrack);
         }
         currentTrack = upcomingTracks[promotedIndex];
         upcomingTracks = upcomingTracks.slice(promotedIndex + 1);
@@ -196,6 +214,7 @@ function syncDynamicSessionState(djSession, currentTrackId) {
     djSession.remainingTracks ?? [],
     djSession.intensity,
     djSession.previewSize ?? 5,
+    playedTracks,
   );
 
   return {
@@ -204,6 +223,7 @@ function syncDynamicSessionState(djSession, currentTrackId) {
     upcomingTracks: queueState.upcomingTracks,
     remainingTracks: queueState.remainingTracks,
     playedTrackIds,
+    playedTracks: playedTracks.slice(-8),
     preview: buildUpcomingPreview(currentTrack, queueState.upcomingTracks),
   };
 }
@@ -358,7 +378,7 @@ app.post("/api/dj/session/start", async (req, res, next) => {
 
     const seedTrack = chooseRandomSeedTrack(resolvedTracks);
     const remainingTracks = removeTrackByKey(resolvedTracks, seedTrack);
-    const queueState = extendDynamicQueue(seedTrack, [], remainingTracks, intensity, 5);
+    const queueState = extendDynamicQueue(seedTrack, [], remainingTracks, intensity, 5, []);
 
     await transferPlayback(session.accessToken, deviceId, false);
     await startPlayback(session.accessToken, deviceId, [seedTrack.uri]);
@@ -373,6 +393,7 @@ app.post("/api/dj/session/start", async (req, res, next) => {
       remainingTracks: queueState.remainingTracks,
       previewSize: 5,
       playedTrackIds: [uniqueTrackKey(seedTrack)],
+      playedTracks: [seedTrack],
       lastQueueRefreshAt: Date.now(),
     };
 
