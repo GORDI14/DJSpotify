@@ -53,9 +53,9 @@ export default function DashboardScreen({ navigation }) {
             </SectionCard>
 
             <SectionCard>
-              <Text style={styles.sectionTitle}>Choose a playlist</Text>
+              <Text style={styles.sectionTitle}>Choose a source</Text>
               <Text style={styles.sectionCopy}>
-                Select the playlist you want to reorder into a DJ-style sequence.
+                Select a playlist or your Liked Songs library to reorder into a DJ-style sequence.
               </Text>
               <Pressable
                 style={[styles.primaryButton, !selectedPlaylist && styles.disabledButton]}

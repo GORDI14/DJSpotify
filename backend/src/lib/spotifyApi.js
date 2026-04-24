@@ -87,7 +87,7 @@ export async function getCurrentUser(accessToken) {
 }
 
 async function resolvePlaylistTrackTotal(accessToken, playlist) {
-  const directTotal = playlist.tracks?.total;
+  const directTotal = playlist.tracks?.total ?? playlist.items?.total;
   if (Number.isFinite(directTotal) && directTotal > 0) {
     return directTotal;
   }
@@ -106,6 +106,32 @@ async function resolvePlaylistTrackTotal(accessToken, playlist) {
   } catch {
     return directTotal ?? 0;
   }
+}
+
+async function resolveEndpointTotal(accessToken, initialPath) {
+  const page = await spotifyFetch(accessToken, initialPath);
+  return page?.total ?? 0;
+}
+
+export async function getPlaylistTrackTotal(accessToken, playlistId) {
+  try {
+    const total = await resolveEndpointTotal(
+      accessToken,
+      `/playlists/${playlistId}/items?limit=1&market=from_token&additional_types=track`,
+    );
+    if (Number.isFinite(total) && total > 0) {
+      return total;
+    }
+  } catch (error) {
+    if (error.status !== 403) {
+      throw error;
+    }
+  }
+
+  return resolveEndpointTotal(
+    accessToken,
+    `/playlists/${playlistId}/tracks?limit=1&market=from_token&additional_types=track`,
+  );
 }
 
 export async function getUserPlaylists(accessToken) {
@@ -131,6 +157,40 @@ export async function getUserPlaylists(accessToken) {
       uri: playlist.uri,
     })),
   );
+}
+
+export async function getSavedTracks(accessToken) {
+  let nextPath = "/me/tracks?limit=50&market=from_token";
+  const items = [];
+
+  while (nextPath) {
+    const page = await spotifyFetch(accessToken, nextPath.replace(SPOTIFY_API_BASE, ""));
+    items.push(...(page.items ?? []));
+    nextPath = page.next;
+  }
+
+  return items
+    .map((item, index) => ({
+      track: item.track,
+      originalIndex: index,
+    }))
+    .filter(({ track }) => track && track.type === "track" && (track.id || track.uri))
+    .map(({ track, originalIndex }) => ({
+      id: track.id ?? null,
+      uri: track.uri,
+      name: track.name,
+      artists: Array.isArray(track.artists) ? track.artists.map((artist) => artist.name).join(", ") : "Unknown artist",
+      album: track.album?.name ?? "Unknown album",
+      durationMs: track.duration_ms,
+      image: track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
+      isLocal: false,
+      originalIndex,
+    }));
+}
+
+export async function getSavedTracksTotal(accessToken) {
+  const page = await spotifyFetch(accessToken, "/me/tracks?limit=1&market=from_token");
+  return page?.total ?? 0;
 }
 
 function mapPlaylistItems(items) {

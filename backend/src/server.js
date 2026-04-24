@@ -12,6 +12,9 @@ import {
   getCurrentUser,
   getPlaybackState,
   getPlaylistTracks,
+  getPlaylistTrackTotal,
+  getSavedTracks,
+  getSavedTracksTotal,
   getUserPlaylists,
   pausePlayback,
   refreshAccessToken,
@@ -38,6 +41,7 @@ const SCOPES = [
   "user-read-email",
   "playlist-read-private",
   "playlist-read-collaborative",
+  "user-library-read",
   "user-modify-playback-state",
   "user-read-playback-state",
   "streaming",
@@ -142,23 +146,67 @@ async function handlePlaylists(req, res) {
   const readablePlaylists = playlists.filter(
     (playlist) => playlist.ownerId === session.profile?.id || playlist.collaborative,
   );
-  res.json({ playlists: readablePlaylists });
+
+  const playlistsWithVerifiedTotals = await Promise.all(
+    readablePlaylists.map(async (playlist) => {
+      try {
+        const verifiedTotal = await getPlaylistTrackTotal(session.accessToken, playlist.id);
+        return {
+          ...playlist,
+          totalTracks: verifiedTotal,
+          sourceType: "playlist",
+        };
+      } catch {
+        return {
+          ...playlist,
+          sourceType: "playlist",
+        };
+      }
+    }),
+  );
+
+  let likedSongsEntry = null;
+  try {
+    likedSongsEntry = {
+      id: "liked-songs",
+      name: "Liked Songs",
+      description: "Tracks saved in Your Music library",
+      totalTracks: await getSavedTracksTotal(session.accessToken),
+      image: null,
+      owner: "Your Library",
+      ownerId: session.profile?.id ?? null,
+      collaborative: false,
+      uri: null,
+      sourceType: "saved",
+    };
+  } catch {
+    likedSongsEntry = null;
+  }
+
+  res.json({
+    playlists: likedSongsEntry ? [likedSongsEntry, ...playlistsWithVerifiedTotals] : playlistsWithVerifiedTotals,
+  });
 }
 
 async function handlePlaylistTracks(req, res) {
   const { session } = await getAuthorizedSession(req, res);
   let tracks;
-  try {
-    tracks = await getPlaylistTracks(session.accessToken, req.params.playlistId);
-  } catch (error) {
-    if (error.status === 403) {
-      const readableError = new Error(
-        "Spotify does not allow this app to read tracks from that playlist. Use a playlist you own or a collaborative one.",
-      );
-      readableError.status = 403;
-      throw readableError;
+
+  if (req.params.playlistId === "liked-songs") {
+    tracks = await getSavedTracks(session.accessToken);
+  } else {
+    try {
+      tracks = await getPlaylistTracks(session.accessToken, req.params.playlistId);
+    } catch (error) {
+      if (error.status === 403) {
+        const readableError = new Error(
+          "Spotify does not allow this app to read tracks from that playlist. Use a playlist you own or a collaborative one.",
+        );
+        readableError.status = 403;
+        throw readableError;
+      }
+      throw error;
     }
-    throw error;
   }
   let features = [];
   try {
@@ -173,7 +221,10 @@ async function handlePlaylistTracks(req, res) {
   }
   const enrichedTracks = combineTracksWithFeatures(tracks, features);
 
-  res.json({ tracks: enrichedTracks });
+  res.json({
+    tracks: enrichedTracks,
+    audioFeaturesAvailable: features.length > 0,
+  });
 }
 
 async function handleGenerate(req, res) {

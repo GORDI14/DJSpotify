@@ -19,6 +19,7 @@ export default function PlayerScreen({ route }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [audioFeaturesAvailable, setAudioFeaturesAvailable] = useState(true);
 
   const loadDevices = useCallback(async () => {
     const response = await api.getDevices(sessionId);
@@ -47,6 +48,7 @@ export default function PlayerScreen({ route }) {
       setError("");
       const trackResponse = await api.getTracks(sessionId, playlist.id);
       setSourceTracks(trackResponse.tracks);
+      setAudioFeaturesAvailable(trackResponse.audioFeaturesAvailable !== false);
 
       const generated = await api.generateDJSet(sessionId, trackResponse.tracks, intensity);
       setDjSet(generated.tracks);
@@ -182,6 +184,11 @@ export default function PlayerScreen({ route }) {
           {stats.tracksWithAudioFeatures !== stats.totalTracks ? (
             <Text style={styles.warning}>
               Some tracks do not include Spotify audio features, so they stay closer to the original playlist order.
+            </Text>
+          ) : null}
+          {!audioFeaturesAvailable ? (
+            <Text style={styles.warning}>
+              Spotify is not returning audio features to this app right now, so BPM and energy are unavailable.
             </Text>
           ) : null}
         </SectionCard>

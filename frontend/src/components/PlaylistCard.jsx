@@ -2,17 +2,23 @@ import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 export default function PlaylistCard({ playlist, selected, onPress }) {
+  const isSavedLibrary = playlist.sourceType === "saved";
+
   return (
     <Pressable style={[styles.card, selected && styles.selected]} onPress={onPress}>
       <Image
         source={{
-          uri: playlist.image ?? "https://placehold.co/300x300/08111d/f4f7fb?text=Playlist",
+          uri: playlist.image ?? (isSavedLibrary
+            ? "https://placehold.co/300x300/1c1338/f4f7fb?text=Liked+Songs"
+            : "https://placehold.co/300x300/08111d/f4f7fb?text=Playlist"),
         }}
         style={styles.image}
       />
       <View style={styles.meta}>
         <Text style={styles.title}>{playlist.name}</Text>
-        <Text style={styles.subtitle}>{playlist.totalTracks} tracks</Text>
+        <Text style={styles.subtitle}>
+          {Number.isFinite(playlist.totalTracks) ? `${playlist.totalTracks} tracks` : "Track count unavailable"}
+        </Text>
         <Text style={styles.owner}>{playlist.owner}</Text>
       </View>
     </Pressable>
