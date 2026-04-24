@@ -50,6 +50,17 @@ export const api = {
       sessionId,
       body: { sourceId, intensity },
     }),
+  startDynamicDjSession: (sessionId, sourceId, intensity, deviceId) =>
+    request("/api/dj/session/start", {
+      method: "POST",
+      sessionId,
+      body: { sourceId, intensity, deviceId },
+    }),
+  syncDynamicDjSession: (sessionId) =>
+    request("/api/dj/session/sync", {
+      method: "POST",
+      sessionId,
+    }),
   getDevices: (sessionId) => request("/api/player/devices", { sessionId }),
   getPlaybackState: (sessionId) => request("/api/player/state", { sessionId }),
   transferPlayback: (sessionId, deviceId, play = false) =>

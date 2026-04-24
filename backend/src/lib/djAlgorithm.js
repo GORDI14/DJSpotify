@@ -62,6 +62,64 @@ function annotateOrderedTracks(tracks, buildHint) {
   }));
 }
 
+function getIntensityMode(intensity) {
+  const intensityMap = {
+    low: { multiplier: 0.85, bpmTolerance: 10 },
+    medium: { multiplier: 1, bpmTolerance: 15 },
+    high: { multiplier: 1.15, bpmTolerance: 18 },
+  };
+
+  return intensityMap[intensity] ?? intensityMap.medium;
+}
+
+function scoreFallbackCandidate(previousTrack, candidate) {
+  const durationGap = previousTrack ? Math.abs((candidate.durationMs ?? 0) - (previousTrack.durationMs ?? 0)) / 1000 : 0;
+  const indexPenalty = Math.abs((candidate.originalIndex ?? 0) - (previousTrack?.originalIndex ?? 0)) * 0.08;
+  const localPenalty = candidate.isLocal ? 5 : 0;
+
+  return durationGap * 0.02 + indexPenalty + localPenalty;
+}
+
+export function chooseRandomSeedTrack(tracks) {
+  if (!tracks.length) {
+    return null;
+  }
+
+  const preferred = tracks.filter((track) => Number.isFinite(track.tempo) || Number.isFinite(track.energy));
+  const pool = preferred.length ? preferred : tracks;
+  const index = Math.floor(Math.random() * pool.length);
+  return pool[index] ?? pool[0];
+}
+
+export function chooseNextTrack(previousTrack, remainingTracks, intensity = "medium", stepIndex = 0, totalLength = 0) {
+  if (!remainingTracks.length) {
+    return null;
+  }
+
+  const featuredTracks = remainingTracks.filter(
+    (track) => Number.isFinite(track.tempo) && Number.isFinite(track.energy) && Number.isFinite(track.danceability),
+  );
+
+  if (previousTrack && featuredTracks.length) {
+    const mode = getIntensityMode(intensity);
+    const referenceLength = totalLength || featuredTracks.length + stepIndex + 1;
+    const energyTargets = buildEnergyTargets(referenceLength, mode.multiplier);
+    const targetEnergy = energyTargets[Math.min(stepIndex, energyTargets.length - 1)] ?? previousTrack.energy ?? 0.6;
+
+    const ranked = [...featuredTracks].sort(
+      (a, b) => scoreCandidate(previousTrack, a, targetEnergy, mode.bpmTolerance) - scoreCandidate(previousTrack, b, targetEnergy, mode.bpmTolerance),
+    );
+
+    return ranked[0] ?? null;
+  }
+
+  const rankedFallback = [...remainingTracks].sort(
+    (a, b) => scoreFallbackCandidate(previousTrack, a) - scoreFallbackCandidate(previousTrack, b),
+  );
+
+  return rankedFallback[0] ?? null;
+}
+
 export function generateDJSet(tracks, intensity = "medium") {
   const featuredTracks = tracks.filter(
     (track) => Number.isFinite(track.tempo) && Number.isFinite(track.energy) && Number.isFinite(track.danceability),
@@ -72,13 +130,7 @@ export function generateDJSet(tracks, intensity = "medium") {
     return annotateOrderedTracks([...tracks], () => "Original playlist order");
   }
 
-  const intensityMap = {
-    low: { multiplier: 0.85, bpmTolerance: 10 },
-    medium: { multiplier: 1, bpmTolerance: 15 },
-    high: { multiplier: 1.15, bpmTolerance: 18 },
-  };
-
-  const mode = intensityMap[intensity] ?? intensityMap.medium;
+  const mode = getIntensityMode(intensity);
   const sortedByTempo = [...featuredTracks].sort((a, b) => a.tempo - b.tempo);
 
   if (sortedByTempo.length <= 2) {

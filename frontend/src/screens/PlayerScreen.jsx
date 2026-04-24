@@ -11,16 +11,18 @@ export default function PlayerScreen({ route }) {
   const { sessionId } = useAuth();
   const playlist = route.params?.playlist;
   const [sourceTracks, setSourceTracks] = useState([]);
-  const [djSet, setDjSet] = useState([]);
+  const [upcomingTracks, setUpcomingTracks] = useState([]);
   const [devices, setDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [playbackState, setPlaybackState] = useState(null);
   const [intensity, setIntensity] = useState("medium");
   const [loading, setLoading] = useState(true);
+  const [startingDj, setStartingDj] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [audioFeaturesAvailable, setAudioFeaturesAvailable] = useState(true);
   const [externalAudioFeatures, setExternalAudioFeatures] = useState(null);
+  const [dynamicSessionActive, setDynamicSessionActive] = useState(false);
 
   const loadDevices = useCallback(async () => {
     const response = await api.getDevices(sessionId);
@@ -39,7 +41,7 @@ export default function PlayerScreen({ route }) {
     setPlaybackState(response.state);
   }, [sessionId]);
 
-  const loadMix = useCallback(async () => {
+  const loadSourceTracks = useCallback(async () => {
     if (!playlist?.id) {
       return;
     }
@@ -50,10 +52,6 @@ export default function PlayerScreen({ route }) {
       const trackResponse = await api.getTracks(sessionId, playlist.id);
       setSourceTracks(trackResponse.tracks);
       setAudioFeaturesAvailable(trackResponse.audioFeaturesAvailable !== false);
-
-      const generated = await api.generateDJSet(sessionId, playlist.id, intensity);
-      setDjSet(generated.tracks);
-      setExternalAudioFeatures(generated.externalAudioFeatures ?? null);
       if (!trackResponse.tracks.length) {
         setError("Spotify returned this playlist without playable tracks for the app.");
       }
@@ -64,62 +62,75 @@ export default function PlayerScreen({ route }) {
     } finally {
       setLoading(false);
     }
-  }, [playlist?.id, sessionId, intensity, loadDevices, loadPlaybackState]);
+  }, [playlist?.id, sessionId, loadDevices, loadPlaybackState]);
 
   useEffect(() => {
-    loadMix();
-  }, [loadMix]);
+    loadSourceTracks();
+  }, [loadSourceTracks]);
+
+  const syncDynamicSession = useCallback(async () => {
+    if (!dynamicSessionActive) {
+      return;
+    }
+
+    try {
+      const response = await api.syncDynamicDjSession(sessionId);
+      setUpcomingTracks(response.preview ?? []);
+      setPlaybackState(response.playbackState?.item ? response.playbackState : response.playbackState ?? null);
+    } catch (requestError) {
+      setActionError(requestError.message);
+    }
+  }, [dynamicSessionActive, sessionId]);
 
   useEffect(() => {
     const interval = setInterval(() => {
       loadDevices().catch(() => {});
-      loadPlaybackState().catch(() => {});
+      if (dynamicSessionActive) {
+        syncDynamicSession().catch(() => {});
+      } else {
+        loadPlaybackState().catch(() => {});
+      }
     }, 6000);
 
     return () => clearInterval(interval);
-  }, [loadDevices, loadPlaybackState]);
+  }, [dynamicSessionActive, loadDevices, loadPlaybackState, syncDynamicSession]);
 
-  const stats = useMemo(() => {
-    if (!djSet.length) {
+  const sourceStats = useMemo(() => {
+    if (!sourceTracks.length) {
       return null;
     }
 
-    const tracksWithTempo = djSet.filter((track) => Number.isFinite(track.tempo));
-    const tracksWithEnergy = djSet.filter((track) => Number.isFinite(track.energy));
+    const tracksWithTempo = sourceTracks.filter((track) => Number.isFinite(track.tempo));
+    const tracksWithEnergy = sourceTracks.filter((track) => Number.isFinite(track.energy));
 
     return {
-      totalTracks: djSet.length,
-      averageBpm: tracksWithTempo.length
-        ? Math.round(tracksWithTempo.reduce((sum, track) => sum + track.tempo, 0) / tracksWithTempo.length)
-        : null,
-      averageEnergy: tracksWithEnergy.length
-        ? Math.round(
-            (tracksWithEnergy.reduce((sum, track) => sum + track.energy, 0) / tracksWithEnergy.length) * 100,
-          )
-        : null,
-      tracksWithAudioFeatures: tracksWithTempo.length,
+      totalTracks: sourceTracks.length,
+      tracksWithTempo: tracksWithTempo.length,
+      tracksWithEnergy: tracksWithEnergy.length,
     };
-  }, [djSet]);
+  }, [sourceTracks]);
 
   async function handlePlay() {
     try {
       setActionError("");
+      setStartingDj(true);
+
       if (!selectedDeviceId) {
         throw new Error("Open Spotify on the target device first, then refresh devices.");
       }
-      if (!djSet.length) {
-        throw new Error("Generate a DJ set with playable tracks before starting playback.");
+      if (!sourceTracks.length) {
+        throw new Error("Load a source with playable tracks before starting Smart DJ.");
       }
 
-      await api.transferPlayback(sessionId, selectedDeviceId, false);
-      await api.playUris(
-        sessionId,
-        djSet.map((track) => track.uri),
-        selectedDeviceId,
-      );
+      const response = await api.startDynamicDjSession(sessionId, playlist.id, intensity, selectedDeviceId);
+      setUpcomingTracks(response.preview ?? []);
+      setExternalAudioFeatures(response.externalAudioFeatures ?? null);
+      setDynamicSessionActive(true);
       await loadPlaybackState();
     } catch (requestError) {
       setActionError(requestError.message);
+    } finally {
+      setStartingDj(false);
     }
   }
 
@@ -137,7 +148,7 @@ export default function PlayerScreen({ route }) {
     try {
       setActionError("");
       await api.skipNext(sessionId, selectedDeviceId);
-      await loadPlaybackState();
+      await syncDynamicSession();
     } catch (requestError) {
       setActionError(requestError.message);
     }
@@ -146,10 +157,10 @@ export default function PlayerScreen({ route }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <SectionCard>
-        <Text style={styles.title}>{playlist?.name ?? "DJ Set"}</Text>
+        <Text style={styles.title}>{playlist?.name ?? "Smart DJ"}</Text>
         <Text style={styles.copy}>
-          Smart DJ sorts by BPM, smooths transitions where possible, builds toward a middle peak,
-          and cools slightly at the end.
+          Smart DJ now starts from a seed track and keeps a live queue of the next best 5 songs based on the BPM and
+          energy data available at the time.
         </Text>
       </SectionCard>
 
@@ -170,27 +181,18 @@ export default function PlayerScreen({ route }) {
         </View>
       </SectionCard>
 
-      {loading ? <LoadingView label="Analyzing playlist and generating the mobile DJ set..." /> : null}
+      {loading ? <LoadingView label="Loading source tracks for Smart DJ..." /> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      {!loading && stats ? (
+      {!loading && sourceStats ? (
         <SectionCard>
-          <Text style={styles.sectionTitle}>Set summary</Text>
-          <Text style={styles.stat}>Tracks: {stats.totalTracks}</Text>
-          <Text style={styles.stat}>
-            Average BPM: {stats.averageBpm ?? "Unavailable from Spotify"}
-          </Text>
-          <Text style={styles.stat}>
-            Average energy: {stats.averageEnergy != null ? `${stats.averageEnergy}%` : "Unavailable from Spotify"}
-          </Text>
-          {stats.tracksWithAudioFeatures !== stats.totalTracks ? (
-            <Text style={styles.warning}>
-              Some tracks do not include Spotify audio features, so they stay closer to the original playlist order.
-            </Text>
-          ) : null}
+          <Text style={styles.sectionTitle}>Detection summary</Text>
+          <Text style={styles.stat}>Tracks in source: {sourceStats.totalTracks}</Text>
+          <Text style={styles.stat}>Tracks with BPM: {sourceStats.tracksWithTempo}</Text>
+          <Text style={styles.stat}>Tracks with energy: {sourceStats.tracksWithEnergy}</Text>
           {!audioFeaturesAvailable ? (
             <Text style={styles.warning}>
-              Spotify is not returning audio features to this app right now, so BPM and energy are unavailable.
+              Spotify did not return native audio features, so Smart DJ is using fallback metadata when possible.
             </Text>
           ) : null}
           {externalAudioFeatures?.provider === "acousticbrainz" ? (
@@ -200,7 +202,7 @@ export default function PlayerScreen({ route }) {
           ) : null}
           {externalAudioFeatures?.lookupLimitApplied ? (
             <Text style={styles.warning}>
-              The external lookup limit was reached for this source, so some tracks may still be missing BPM or energy.
+              The external lookup limit was reached, so some tracks may still be missing BPM or energy.
             </Text>
           ) : null}
         </SectionCard>
@@ -215,8 +217,8 @@ export default function PlayerScreen({ route }) {
             </Pressable>
           </View>
           <Text style={styles.copy}>
-            Open Spotify on your phone, tablet, or desktop first. Then refresh and select the
-            device that should receive the generated set.
+            Open Spotify on your phone, tablet, or desktop first. Then refresh and select the device that should
+            receive the live Smart DJ queue.
           </Text>
           <Pressable style={styles.spotifyButton} onPress={() => Linking.openURL("spotify:")}>
             <Text style={styles.spotifyButtonText}>Open Spotify</Text>
@@ -233,13 +235,11 @@ export default function PlayerScreen({ route }) {
         <SectionCard>
           <Text style={styles.sectionTitle}>Playback control</Text>
           <Text style={styles.copy}>
-            Crossfade is not exposed through Spotify public mobile APIs, so this MVP simulates a
-            smoother DJ feel through sequencing. If you enable Spotify app crossfade in your account
-            settings, transitions feel even better.
+            Start Smart DJ to play one seed song and keep the next 5 queued dynamically while playback advances.
           </Text>
           <View style={styles.controlRow}>
-            <Pressable style={styles.primaryButton} onPress={handlePlay}>
-              <Text style={styles.primaryButtonText}>Play DJ Set</Text>
+            <Pressable style={[styles.primaryButton, startingDj && styles.disabledButton]} onPress={handlePlay} disabled={startingDj}>
+              <Text style={styles.primaryButtonText}>{dynamicSessionActive ? "Restart Smart DJ" : "Start Smart DJ"}</Text>
             </Pressable>
             <Pressable style={styles.secondaryButton} onPress={handlePause}>
               <Text style={styles.secondaryButtonText}>Pause</Text>
@@ -263,22 +263,13 @@ export default function PlayerScreen({ route }) {
 
       {!loading ? (
         <SectionCard>
-          <Text style={styles.sectionTitle}>Generated DJ set</Text>
-          {djSet.length ? (
-            <TrackList tracks={djSet} />
+          <Text style={styles.sectionTitle}>Next 5 songs</Text>
+          {upcomingTracks.length ? (
+            <TrackList tracks={upcomingTracks} />
           ) : (
-            <Text style={styles.copy}>No playable tracks were available to generate a DJ set.</Text>
-          )}
-        </SectionCard>
-      ) : null}
-
-      {!loading ? (
-        <SectionCard>
-          <Text style={styles.sectionTitle}>Source playlist preview</Text>
-          {sourceTracks.length ? (
-            <TrackList tracks={sourceTracks.slice(0, 10)} compact />
-          ) : (
-            <Text style={styles.copy}>The playlist came back empty for the current Spotify session.</Text>
+            <Text style={styles.copy}>
+              Start Smart DJ to see the next 5 songs the app is preparing for the live queue.
+            </Text>
           )}
         </SectionCard>
       ) : null}
@@ -376,6 +367,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     flex: 1.4,
     paddingVertical: 14,
+  },
+  disabledButton: {
+    opacity: 0.55,
   },
   primaryButtonText: {
     color: "#08111d",

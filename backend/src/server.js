@@ -3,10 +3,11 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import crypto from "node:crypto";
-import { generateDJSet } from "./lib/djAlgorithm.js";
+import { chooseNextTrack, chooseRandomSeedTrack, generateDJSet } from "./lib/djAlgorithm.js";
 import { enrichTracksWithExternalAudioFeatures } from "./lib/externalAudioFeatures.js";
 import { clearSession, createSession, getSession, updateSession } from "./lib/sessionStore.js";
 import {
+  addToPlaybackQueue,
   exchangeCodeForToken,
   getAudioFeaturesForTracks,
   getAvailableDevices,
@@ -45,6 +46,7 @@ const SCOPES = [
   "user-library-read",
   "user-modify-playback-state",
   "user-read-playback-state",
+  "user-read-currently-playing",
   "streaming",
 ].join(" ");
 
@@ -139,6 +141,91 @@ function combineTracksWithFeatures(tracks, features) {
         hasAudioFeatures: Boolean(feature),
       };
     });
+}
+
+function getCachedTrackSource(session, sourceId) {
+  const cachedSource = session?.cachedTrackSource;
+  if (!cachedSource?.sourceId || cachedSource.sourceId !== sourceId || !Array.isArray(cachedSource.tracks)) {
+    return null;
+  }
+
+  return cachedSource.tracks;
+}
+
+function uniqueTrackKey(track) {
+  return track.id ?? track.uri;
+}
+
+function removeTrackByKey(tracks, targetTrack) {
+  const targetKey = uniqueTrackKey(targetTrack);
+  return tracks.filter((track) => uniqueTrackKey(track) !== targetKey);
+}
+
+function buildUpcomingPreview(currentTrack, upcomingTracks) {
+  return upcomingTracks.slice(0, 5).map((track, index) => ({
+    ...track,
+    djPosition: index + 1,
+  }));
+}
+
+function extendDynamicQueue(currentTrack, upcomingTracks, remainingTracks, intensity, desiredSize) {
+  const nextUpcoming = [...upcomingTracks];
+  let nextRemaining = [...remainingTracks];
+  let referenceTrack = nextUpcoming[nextUpcoming.length - 1] ?? currentTrack ?? null;
+  const totalLength = nextUpcoming.length + nextRemaining.length + (currentTrack ? 1 : 0);
+
+  while (nextUpcoming.length < desiredSize && nextRemaining.length > 0) {
+    const candidate = chooseNextTrack(referenceTrack, nextRemaining, intensity, nextUpcoming.length, totalLength);
+    const selected = candidate ?? nextRemaining[0];
+    nextUpcoming.push(selected);
+    nextRemaining = removeTrackByKey(nextRemaining, selected);
+    referenceTrack = selected;
+  }
+
+  return {
+    upcomingTracks: nextUpcoming,
+    remainingTracks: nextRemaining,
+  };
+}
+
+function syncDynamicSessionState(djSession, currentTrackId) {
+  if (!djSession) {
+    return null;
+  }
+
+  let currentTrack = djSession.currentTrack ?? null;
+  let upcomingTracks = [...(djSession.upcomingTracks ?? [])];
+  let playedTrackIds = [...(djSession.playedTrackIds ?? [])];
+
+  if (currentTrackId) {
+    if (uniqueTrackKey(currentTrack) !== currentTrackId) {
+      const promotedIndex = upcomingTracks.findIndex((track) => uniqueTrackKey(track) === currentTrackId);
+      if (promotedIndex >= 0) {
+        if (currentTrack) {
+          playedTrackIds.push(uniqueTrackKey(currentTrack));
+        }
+        currentTrack = upcomingTracks[promotedIndex];
+        upcomingTracks = upcomingTracks.slice(promotedIndex + 1);
+      }
+    }
+  }
+
+  const queueState = extendDynamicQueue(
+    currentTrack,
+    upcomingTracks,
+    djSession.remainingTracks ?? [],
+    djSession.intensity,
+    djSession.previewSize ?? 5,
+  );
+
+  return {
+    ...djSession,
+    currentTrack,
+    upcomingTracks: queueState.upcomingTracks,
+    remainingTracks: queueState.remainingTracks,
+    playedTrackIds,
+    preview: buildUpcomingPreview(currentTrack, queueState.upcomingTracks),
+  };
 }
 
 async function handlePlaylists(req, res) {
@@ -289,6 +376,142 @@ async function handleGenerate(req, res) {
     externalAudioFeatures,
   });
 }
+
+async function resolveSourceTracksForDjSession(req, res, sourceId) {
+  const { sessionId, session } = await getAuthorizedSession(req, res);
+  const cachedTracks = getCachedTrackSource(session, sourceId);
+  if (!cachedTracks?.length) {
+    const error = new Error("Load the playlist tracks before starting Smart DJ playback.");
+    error.status = 400;
+    throw error;
+  }
+
+  let resolvedTracks = cachedTracks;
+  let externalAudioFeatures = {
+    provider: "none",
+    enrichedCount: 0,
+    attemptedLookups: 0,
+    lookupLimitApplied: false,
+  };
+
+  const needsFallbackFeatures = resolvedTracks.some(
+    (track) => !Number.isFinite(track.tempo) || !Number.isFinite(track.energy) || !Number.isFinite(track.danceability),
+  );
+
+  if (needsFallbackFeatures) {
+    const fallback = await enrichTracksWithExternalAudioFeatures(resolvedTracks);
+    resolvedTracks = fallback.tracks;
+    externalAudioFeatures = fallback.meta;
+    updateSession(sessionId, {
+      cachedTrackSource: {
+        sourceId,
+        tracks: resolvedTracks,
+        updatedAt: Date.now(),
+      },
+    });
+  }
+
+  return { sessionId, session: getSession(sessionId), resolvedTracks, externalAudioFeatures };
+}
+
+async function queueTracksOnDevice(accessToken, deviceId, tracks) {
+  for (const track of tracks) {
+    if (track?.uri) {
+      await addToPlaybackQueue(accessToken, track.uri, deviceId);
+    }
+  }
+}
+
+app.post("/api/dj/session/start", async (req, res, next) => {
+  try {
+    const { sourceId, intensity = "medium", deviceId } = req.body;
+    if (!sourceId || !deviceId) {
+      const error = new Error("Missing sourceId or deviceId.");
+      error.status = 400;
+      throw error;
+    }
+
+    const { sessionId, session, resolvedTracks, externalAudioFeatures } = await resolveSourceTracksForDjSession(req, res, sourceId);
+    if (!resolvedTracks.length) {
+      const error = new Error("No playable tracks available for Smart DJ.");
+      error.status = 400;
+      throw error;
+    }
+
+    const seedTrack = chooseRandomSeedTrack(resolvedTracks);
+    const remainingTracks = removeTrackByKey(resolvedTracks, seedTrack);
+    const queueState = extendDynamicQueue(seedTrack, [], remainingTracks, intensity, 5);
+
+    await transferPlayback(session.accessToken, deviceId, false);
+    await startPlayback(session.accessToken, deviceId, [seedTrack.uri]);
+    await queueTracksOnDevice(session.accessToken, deviceId, queueState.upcomingTracks);
+
+    const djSession = {
+      sourceId,
+      intensity,
+      deviceId,
+      currentTrack: seedTrack,
+      upcomingTracks: queueState.upcomingTracks,
+      remainingTracks: queueState.remainingTracks,
+      previewSize: 5,
+      playedTrackIds: [uniqueTrackKey(seedTrack)],
+      lastQueueRefreshAt: Date.now(),
+    };
+
+    updateSession(sessionId, {
+      djSession,
+    });
+
+    res.json({
+      started: true,
+      currentTrack: seedTrack,
+      preview: buildUpcomingPreview(seedTrack, queueState.upcomingTracks),
+      externalAudioFeatures,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/dj/session/sync", async (req, res, next) => {
+  try {
+    const { sessionId, session } = await getAuthorizedSession(req, res);
+    const djSession = session?.djSession;
+    if (!djSession) {
+      const error = new Error("No Smart DJ session is active.");
+      error.status = 400;
+      throw error;
+    }
+
+    const playback = await getPlaybackState(session.accessToken);
+    const currentTrackId = playback?.item?.id ?? playback?.item?.uri ?? null;
+    const nextSession = syncDynamicSessionState(djSession, currentTrackId);
+
+    const previousUpcomingKeys = new Set((djSession.upcomingTracks ?? []).map((track) => uniqueTrackKey(track)));
+    const newTracksToQueue = (nextSession.upcomingTracks ?? []).filter(
+      (track) => !previousUpcomingKeys.has(uniqueTrackKey(track)),
+    );
+
+    if (newTracksToQueue.length) {
+      await queueTracksOnDevice(session.accessToken, djSession.deviceId, newTracksToQueue);
+    }
+
+    updateSession(sessionId, {
+      djSession: {
+        ...nextSession,
+        lastQueueRefreshAt: Date.now(),
+      },
+    });
+
+    res.json({
+      currentTrack: nextSession.currentTrack,
+      preview: nextSession.preview,
+      playbackState: playback,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 function redirectToMobileApp(returnUrl, query) {
   const url = new URL(returnUrl);

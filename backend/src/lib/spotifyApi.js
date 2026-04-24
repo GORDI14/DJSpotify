@@ -296,6 +296,17 @@ export async function skipToNext(accessToken, deviceId) {
   });
 }
 
+export async function addToPlaybackQueue(accessToken, uri, deviceId) {
+  const params = new URLSearchParams({ uri });
+  if (deviceId) {
+    params.set("device_id", deviceId);
+  }
+
+  return spotifyFetch(accessToken, `/me/player/queue?${params.toString()}`, {
+    method: "POST",
+  });
+}
+
 export async function getPlaybackState(accessToken) {
   return spotifyFetch(accessToken, "/me/player");
 }
