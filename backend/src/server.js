@@ -4,12 +4,11 @@ import dotenv from "dotenv";
 import express from "express";
 import crypto from "node:crypto";
 import { chooseNextTrack, chooseRandomSeedTrack, generateDJSet } from "./lib/djAlgorithm.js";
-import { enrichTracksWithExternalAudioFeatures } from "./lib/externalAudioFeatures.js";
+import { estimateTrackFeatures } from "./lib/heuristicAudioFeatures.js";
 import { clearSession, createSession, getSession, updateSession } from "./lib/sessionStore.js";
 import {
   addToPlaybackQueue,
   exchangeCodeForToken,
-  getAudioFeaturesForTracks,
   getAvailableDevices,
   getCurrentUser,
   getPlaybackState,
@@ -122,25 +121,6 @@ async function getAuthorizedSession(req, res) {
   }
 
   return { sessionId, session: getSession(sessionId) };
-}
-
-function combineTracksWithFeatures(tracks, features) {
-  const featureMap = new Map(features.filter(Boolean).map((feature) => [feature.id, feature]));
-
-  return tracks
-    .map((track) => {
-      const feature = featureMap.get(track.id);
-
-      return {
-        ...track,
-        tempo: feature?.tempo ?? null,
-        energy: feature?.energy ?? null,
-        danceability: feature?.danceability ?? null,
-        valence: feature?.valence ?? null,
-        key: feature?.key ?? null,
-        hasAudioFeatures: Boolean(feature),
-      };
-    });
 }
 
 function getCachedTrackSource(session, sourceId) {
@@ -296,18 +276,7 @@ async function handlePlaylistTracks(req, res) {
       throw error;
     }
   }
-  let features = [];
-  try {
-    features = await getAudioFeaturesForTracks(
-      session.accessToken,
-      tracks.map((track) => track.id).filter(Boolean),
-    );
-  } catch (error) {
-    if (error.status !== 403) {
-      throw error;
-    }
-  }
-  const enrichedTracks = combineTracksWithFeatures(tracks, features);
+  const enrichedTracks = estimateTrackFeatures(tracks);
 
   updateSession(sessionId, {
     cachedTrackSource: {
@@ -319,7 +288,8 @@ async function handlePlaylistTracks(req, res) {
 
   res.json({
     tracks: enrichedTracks,
-    audioFeaturesAvailable: features.length > 0,
+    audioFeaturesAvailable: false,
+    audioFeatureSource: "estimated",
   });
 }
 
@@ -337,37 +307,7 @@ async function handleGenerate(req, res) {
   }
 
   let resolvedTracks = sourceTracks;
-  let externalAudioFeatures = {
-    provider: "none",
-    enrichedCount: 0,
-    attemptedLookups: 0,
-    lookupLimitApplied: false,
-  };
-
-  const needsFallbackFeatures = resolvedTracks.some(
-    (track) => !Number.isFinite(track.tempo) || !Number.isFinite(track.energy) || !Number.isFinite(track.danceability),
-  );
-
-  if (needsFallbackFeatures) {
-    const fallback = await enrichTracksWithExternalAudioFeatures(resolvedTracks);
-    resolvedTracks = fallback.tracks;
-    externalAudioFeatures = fallback.meta;
-
-    if (sourceId) {
-      const sessionId = getSessionId(req, res);
-      const session = getSession(sessionId);
-      const cachedSource = session?.cachedTrackSource;
-      if (cachedSource?.sourceId === sourceId) {
-        updateSession(sessionId, {
-          cachedTrackSource: {
-            ...cachedSource,
-            tracks: resolvedTracks,
-            updatedAt: Date.now(),
-          },
-        });
-      }
-    }
-  }
+  const externalAudioFeatures = { provider: "estimated", enrichedCount: resolvedTracks.length };
 
   const generatedSet = generateDJSet(resolvedTracks, intensity);
   res.json({
@@ -387,29 +327,7 @@ async function resolveSourceTracksForDjSession(req, res, sourceId) {
   }
 
   let resolvedTracks = cachedTracks;
-  let externalAudioFeatures = {
-    provider: "none",
-    enrichedCount: 0,
-    attemptedLookups: 0,
-    lookupLimitApplied: false,
-  };
-
-  const needsFallbackFeatures = resolvedTracks.some(
-    (track) => !Number.isFinite(track.tempo) || !Number.isFinite(track.energy) || !Number.isFinite(track.danceability),
-  );
-
-  if (needsFallbackFeatures) {
-    const fallback = await enrichTracksWithExternalAudioFeatures(resolvedTracks);
-    resolvedTracks = fallback.tracks;
-    externalAudioFeatures = fallback.meta;
-    updateSession(sessionId, {
-      cachedTrackSource: {
-        sourceId,
-        tracks: resolvedTracks,
-        updatedAt: Date.now(),
-      },
-    });
-  }
+  const externalAudioFeatures = { provider: "estimated", enrichedCount: resolvedTracks.length };
 
   return { sessionId, session: getSession(sessionId), resolvedTracks, externalAudioFeatures };
 }

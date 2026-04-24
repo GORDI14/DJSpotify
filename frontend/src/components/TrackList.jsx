@@ -16,11 +16,13 @@ export default function TrackList({ tracks, compact = false }) {
           {!compact ? (
             <View style={styles.metrics}>
               <Text style={styles.metric}>
-                {Number.isFinite(track.tempo) ? `${Math.round(track.tempo)} BPM` : "BPM unavailable"}
+                {Number.isFinite(track.tempo)
+                  ? `${Math.round(track.tempo)} ${track.estimatedTempo ? "est. BPM" : "BPM"}`
+                  : "BPM unavailable"}
               </Text>
               <Text style={styles.metric}>
                 {Number.isFinite(track.energy)
-                  ? `${Math.round(track.energy * 100)}% energy`
+                  ? `${Math.round(track.energy * 100)}% ${track.estimatedEnergy ? "est. energy" : "energy"}`
                   : "Energy unavailable"}
               </Text>
             </View>

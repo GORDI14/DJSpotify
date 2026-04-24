@@ -20,8 +20,7 @@ export default function PlayerScreen({ route }) {
   const [startingDj, setStartingDj] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
-  const [audioFeaturesAvailable, setAudioFeaturesAvailable] = useState(true);
-  const [externalAudioFeatures, setExternalAudioFeatures] = useState(null);
+  const [audioFeatureSource, setAudioFeatureSource] = useState("estimated");
   const [dynamicSessionActive, setDynamicSessionActive] = useState(false);
 
   const loadDevices = useCallback(async () => {
@@ -51,7 +50,7 @@ export default function PlayerScreen({ route }) {
       setError("");
       const trackResponse = await api.getTracks(sessionId, playlist.id);
       setSourceTracks(trackResponse.tracks);
-      setAudioFeaturesAvailable(trackResponse.audioFeaturesAvailable !== false);
+      setAudioFeatureSource(trackResponse.audioFeatureSource ?? "estimated");
       if (!trackResponse.tracks.length) {
         setError("Spotify returned this playlist without playable tracks for the app.");
       }
@@ -124,7 +123,6 @@ export default function PlayerScreen({ route }) {
 
       const response = await api.startDynamicDjSession(sessionId, playlist.id, intensity, selectedDeviceId);
       setUpcomingTracks(response.preview ?? []);
-      setExternalAudioFeatures(response.externalAudioFeatures ?? null);
       setDynamicSessionActive(true);
       await loadPlaybackState();
     } catch (requestError) {
@@ -160,7 +158,7 @@ export default function PlayerScreen({ route }) {
         <Text style={styles.title}>{playlist?.name ?? "Smart DJ"}</Text>
         <Text style={styles.copy}>
           Smart DJ now starts from a seed track and, at each step, samples around 20 random songs from the source to
-          decide which one fits best next with the BPM and energy data available at the time.
+          decide which one fits best next with locally estimated BPM and energy data.
         </Text>
       </SectionCard>
 
@@ -190,21 +188,10 @@ export default function PlayerScreen({ route }) {
           <Text style={styles.stat}>Tracks in source: {sourceStats.totalTracks}</Text>
           <Text style={styles.stat}>Tracks with BPM: {sourceStats.tracksWithTempo}</Text>
           <Text style={styles.stat}>Tracks with energy: {sourceStats.tracksWithEnergy}</Text>
-          {!audioFeaturesAvailable ? (
-            <Text style={styles.warning}>
-              Spotify did not return native audio features, so Smart DJ is using fallback metadata when possible.
-            </Text>
-          ) : null}
-          {externalAudioFeatures?.provider === "acousticbrainz" ? (
-            <Text style={styles.warning}>
-              External fallback filled {externalAudioFeatures.enrichedCount} tracks using AcousticBrainz. Energy is an estimate based on loudness descriptors.
-            </Text>
-          ) : null}
-          {externalAudioFeatures?.lookupLimitApplied ? (
-            <Text style={styles.warning}>
-              The external lookup limit was reached, so some tracks may still be missing BPM or energy.
-            </Text>
-          ) : null}
+          <Text style={styles.warning}>
+            Smart DJ is using local estimated BPM and energy values generated from track metadata and playlist context.
+          </Text>
+          <Text style={styles.warning}>Feature source: {audioFeatureSource}</Text>
         </SectionCard>
       ) : null}
 
