@@ -12,10 +12,18 @@ async function parseSpotifyResponse(response) {
   }
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+  }
 
   if (!response.ok) {
-    const error = new Error(data?.error?.message ?? data?.error_description ?? "Spotify request failed");
+    const baseMessage = data?.error?.message ?? data?.error_description ?? data?.error?.reason ?? "Spotify request failed";
+    const error = new Error(`${baseMessage} (Spotify ${response.status})`);
     error.status = response.status;
     error.payload = data;
     throw error;
@@ -118,6 +126,8 @@ export async function getUserPlaylists(accessToken) {
       totalTracks: await resolvePlaylistTrackTotal(accessToken, playlist),
       image: playlist.images?.[0]?.url ?? null,
       owner: playlist.owner?.display_name ?? playlist.owner?.id ?? "Spotify user",
+      ownerId: playlist.owner?.id ?? null,
+      collaborative: Boolean(playlist.collaborative),
       uri: playlist.uri,
     })),
   );

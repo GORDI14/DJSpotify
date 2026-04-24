@@ -139,12 +139,27 @@ function combineTracksWithFeatures(tracks, features) {
 async function handlePlaylists(req, res) {
   const { session } = await getAuthorizedSession(req, res);
   const playlists = await getUserPlaylists(session.accessToken);
-  res.json({ playlists });
+  const readablePlaylists = playlists.filter(
+    (playlist) => playlist.ownerId === session.profile?.id || playlist.collaborative,
+  );
+  res.json({ playlists: readablePlaylists });
 }
 
 async function handlePlaylistTracks(req, res) {
   const { session } = await getAuthorizedSession(req, res);
-  const tracks = await getPlaylistTracks(session.accessToken, req.params.playlistId);
+  let tracks;
+  try {
+    tracks = await getPlaylistTracks(session.accessToken, req.params.playlistId);
+  } catch (error) {
+    if (error.status === 403) {
+      const readableError = new Error(
+        "Spotify does not allow this app to read tracks from that playlist. Use a playlist you own or a collaborative one.",
+      );
+      readableError.status = 403;
+      throw readableError;
+    }
+    throw error;
+  }
   const features = await getAudioFeaturesForTracks(
     session.accessToken,
     tracks.map((track) => track.id).filter(Boolean),
