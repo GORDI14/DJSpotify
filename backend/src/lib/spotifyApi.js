@@ -123,17 +123,8 @@ export async function getUserPlaylists(accessToken) {
   );
 }
 
-export async function getPlaylistTracks(accessToken, playlistId) {
-  let nextPath = `/playlists/${playlistId}/tracks?limit=100&market=from_token`;
-  const tracks = [];
-
-  while (nextPath) {
-    const page = await spotifyFetch(accessToken, nextPath.replace(SPOTIFY_API_BASE, ""));
-    tracks.push(...page.items);
-    nextPath = page.next;
-  }
-
-  return tracks
+function mapPlaylistItems(items) {
+  return items
     .map((item, index) => ({
       track: item.item ?? item.track,
       isLocal: Boolean(item.is_local),
@@ -141,10 +132,10 @@ export async function getPlaylistTracks(accessToken, playlistId) {
     }))
     .filter(({ track }) => track && track.type === "track" && (track.id || track.uri))
     .map(({ track, originalIndex, isLocal }) => ({
-      id: track.id,
+      id: track.id ?? null,
       uri: track.uri,
       name: track.name,
-      artists: track.artists.map((artist) => artist.name).join(", "),
+      artists: Array.isArray(track.artists) ? track.artists.map((artist) => artist.name).join(", ") : "Unknown artist",
       album: track.album?.name ?? "Unknown album",
       durationMs: track.duration_ms,
       image: track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
@@ -153,10 +144,40 @@ export async function getPlaylistTracks(accessToken, playlistId) {
     }));
 }
 
+async function fetchPlaylistItems(accessToken, initialPath) {
+  let nextPath = initialPath;
+  const items = [];
+
+  while (nextPath) {
+    const page = await spotifyFetch(accessToken, nextPath.replace(SPOTIFY_API_BASE, ""));
+    items.push(...(page.items ?? []));
+    nextPath = page.next;
+  }
+
+  return mapPlaylistItems(items);
+}
+
+export async function getPlaylistTracks(accessToken, playlistId) {
+  const modernItemsPath = `/playlists/${playlistId}/items?limit=100&market=from_token&additional_types=track`;
+  const legacyTracksPath = `/playlists/${playlistId}/tracks?limit=100&market=from_token&additional_types=track`;
+
+  const modernTracks = await fetchPlaylistItems(accessToken, modernItemsPath);
+  if (modernTracks.length > 0) {
+    return modernTracks;
+  }
+
+  return fetchPlaylistItems(accessToken, legacyTracksPath);
+}
+
 export async function getAudioFeaturesForTracks(accessToken, trackIds) {
+  const validTrackIds = trackIds.filter(Boolean);
+  if (!validTrackIds.length) {
+    return [];
+  }
+
   const chunks = [];
-  for (let index = 0; index < trackIds.length; index += 100) {
-    chunks.push(trackIds.slice(index, index + 100));
+  for (let index = 0; index < validTrackIds.length; index += 100) {
+    chunks.push(validTrackIds.slice(index, index + 100));
   }
 
   const results = await Promise.all(

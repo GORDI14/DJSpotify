@@ -147,7 +147,7 @@ async function handlePlaylistTracks(req, res) {
   const tracks = await getPlaylistTracks(session.accessToken, req.params.playlistId);
   const features = await getAudioFeaturesForTracks(
     session.accessToken,
-    tracks.map((track) => track.id),
+    tracks.map((track) => track.id).filter(Boolean),
   );
   const enrichedTracks = combineTracksWithFeatures(tracks, features);
 
