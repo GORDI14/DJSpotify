@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Smart DJ for Spotify",
+    "slug": "smart-dj-for-spotify",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "smartdj",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jumag.smartdj"
+    },
+    "android": {
+      "package": "com.jumag.smartdj"
+    }
+  }
+}

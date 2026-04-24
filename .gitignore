@@ -2,6 +2,9 @@
 
 # dependencies
 node_modules/
+.env
+frontend/dist
+backend/dist
 
 # Expo
 .expo/
